@@ -1,0 +1,88 @@
+#==============================================================================
+# Database Display Name Override
+# 
+# 데이터베이스 노트에 <이름:XXX> 태그를 작성하면
+# UI에 표시되는 이름을 해당 문자열로 교체되며,
+# 표시되는 문자는 draw_text_ex의 기능을 지원합니다.
+#
+# 지원 기능 :
+# draw_text_ex를 사용하므로 다음이 모두 사용 가능합니다.
+# - \c[n] 색상 변경
+# - \i[n] 아이콘 삽입
+# - \{ \} 글자 크기 변경
+# - 기타 기본 escape 코드
+# 추가로 멀티 폰트와도 연계되어, 각 언어에 맞는 폰트가 지원됩니다.
+#
+# 적용 범위 : 
+# Window_Base#draw_item_name 경로
+# - 아이템 / 무기 / 방어구 / 스킬 / 상태 표시 루트
+# - 아이콘 위치 계산은 기본 동작과 동일하며, 아이콘 뒤의 텍스트 위치를 자동 보정합니다.
+# Window_Base#draw_actor_class
+# - 직업명 표시 루트
+# - 적용법은 동일하게 <이름:XXX>입니다.
+#
+# 주의 : 
+# - draw_text_ex는 자동 잘림을 지원하지 않기에,
+#   이름이 너무 길면 UI에서 잘릴 수 있습니다
+# - 다른 플러그인이 draw_text_ex를 재정의하면 alias 순서에 따라
+#   적용되지 않을 수 있습니다
+# - 실제로 itme.name을 변경하는 것이 아니기에, 내부 로직/조건문에 영향은 없습니다
+#==============================================================================
+
+module DBNameOverride
+  TAG = "이름"
+  RE  = /<#{Regexp.escape(TAG)}:(.+?)>/m
+
+  # Returns override string or nil
+  def self.fetch(obj)
+    return nil unless obj && obj.respond_to?(:note)
+    m = obj.note.match(RE)
+    m ? m[1].strip : nil
+  end
+end
+
+class Window_Base < Window
+  #------------------------------------------------------------
+  # Items / Weapons / Armors / Skills / States (and anything else
+  # that is drawn through draw_item_name)
+  #------------------------------------------------------------
+  alias __dbno_unified_draw_item_name draw_item_name
+  def draw_item_name(item, x, y, enabled = true, width = 172)
+    return __dbno_unified_draw_item_name(item, x, y, enabled, width) unless item
+
+    override_name = DBNameOverride.fetch(item)
+    return __dbno_unified_draw_item_name(item, x, y, enabled, width) unless override_name
+
+    last_color = contents.font.color
+
+    # icon + text position (match default behavior)
+    if item.respond_to?(:icon_index)
+      draw_icon(item.icon_index, x, y, enabled)
+      text_x = x + 24 + 4
+      # text_w = width - 24 - 4  # reserved, draw_text_ex doesn't use width directly
+    else
+      text_x = x
+    end
+
+    change_color(normal_color, enabled)
+    draw_text_ex(text_x, y, override_name)
+  ensure
+    contents.font.color = last_color if last_color
+  end
+
+  #------------------------------------------------------------
+  # Class name (job) - unified tag on RPG::Class note
+  #------------------------------------------------------------
+  alias __dbno_unified_draw_actor_class draw_actor_class
+  def draw_actor_class(actor, x, y, width = 112)
+    klass = actor.class
+    override_name = DBNameOverride.fetch(klass)
+    return __dbno_unified_draw_actor_class(actor, x, y, width) unless override_name
+
+    last_color = contents.font.color
+    change_color(normal_color)
+    draw_text_ex(x, y, override_name)
+  ensure
+    contents.font.color = last_color if last_color
+  end
+end
