@@ -1,0 +1,322 @@
+#==============================================================================
+# ---------------------------------------------------------------
+#	RPG Maker VX Ace용 멀티 폰트 스크립트
+#	사용법은 하술
+# ---------------------------------------------------------------
+# ---------------------------------------------------------------
+#	적용 범위 :
+#	UI) Btimap#draw_text
+#	메뉴/상태장/리스트 등의 대부분의 UI에 적용
+#	텍스트의 일부를 샘플링해서, 제일 많은 비중을 차지하는 언어의 :ui 프로파일 적용
+#
+#	EX) Window_Base#Process_normal_character = draw_text_ex
+#	메시지창/헬프창 등, draw_text_ex를 쓰는 텍스트에 적용
+#	글자 단위로 언어를 판정해서 그 언어에 :ex를 적용
+# ---------------------------------------------------------------
+# ---------------------------------------------------------------
+#	폰트 판정 :
+#	한국어: 완성형/자모/호환자모 범위
+#	일본어 : 히라가나/가타카나/반각 가타카나 + 일본식 구두점 일부는 :jp로 취급
+#	한자 : CJK 통합 한자/확장A/호환 한자
+#	그 외는 전부 :en으로 취급
+# ---------------------------------------------------------------
+# ---------------------------------------------------------------
+#	중요한 제한/주의사항 : 
+#	- 이 플러그인은 Bitmap#draw_text를 전역 후킹하므로,
+#   같은 메서드를 후킹하는 스크립트와 alias 충돌 가능
+#	      보통 “맨 아래(메인 위)”에 두면 해결되는 경우가 많음
+#
+#	- UI 판정은 샘플링 기반이라 (최대 12글자 카운트)
+#		   너무 짧거나 증거가 부족하면 아예 무개입할 수 있음(의도된 안전장치)
+#
+#	- draw_text에 \e 같은 escape가 들어간 문자열은 무개입(원본 처리)
+#
+#	- draw_text_ex는 줄바꿈/이모지/특수 처리 등이 섞이면 폰트 전환이 잦을 수 있음
+# (그래도 최적화로 “같은 그룹 재적용”은 막아둠)
+# ---------------------------------------------------------------
+# ---------------------------------------------------------------
+#	캐시 관련 : 
+#	내부에 프로파일 캐시/문자열 판정 캐시가 있음
+#	게임 실행 중 PROFILE을 바꾸는 경우만 MultiFont.invalidate_cache! 호출하면 됨
+#	(대부분은 시작 시 설정이라 신경 X)
+#==============================================================================
+
+module MultiFont
+#--------------------------------------------------------------------------
+# PROFILE (auto-vivified)
+#--------------------------------------------------------------------------
+  PROFILE = Hash.new { |h, k| h[k] = {} }
+#--------------------------------------------------------------------------
+#	PROFILE[:ko], PROFILE[:jp], PROFILE[:en], PROFILE[:hz] 각각이 “언어별 설정”
+#	루트 키는 공통(= UI + EX 둘 다 적용)
+#	ui:는 UI에서만, ex:는 EX에서만 덮어쓰기
+#	PROFILE로 정의되지 않은 부분은 엔진 기본 설정을 따라감
+#	(단 건드릴 게 없다며 주석 처리하지 말 것)
+#
+#	name: 폰트 후보 리스트(배열) — 예: ["VL Gothic", "MS Gothic"]
+#	size: 정수값만 사용 가능
+#	bold, italic, shadow, outline : true/false로 관리
+#	color: [r,g,b,a] 각각 기입
+#	out_color: [r,g,b,a] color와 동일
+#	ui: / ex: 위 키들을 동일하게 넣는 덮어쓰기용 해시
+#		만약 ko에 ui에만 적용하고 싶으면 [:ko][:ui] 처럼 써도 되고,
+#		( ) 안에 "ui: { }"를 넣어서 적용하면 됨.
+#		양쪽 다 적용하고 싶으면 아무것도 추가하지 말 것
+#
+#
+#	사용Ex)	MultiFont::PROFILE[:ko].merge!(	  #[:ko]이므로, 한글 폰트를 설정하는 객체값
+# 			  name: ["맑은 고딕","VL Gothic"],	  #폰트 후보(앞이 우선)
+#  		  	size: 24,	  #크기 24
+#			    bold: false	  #굵게 끄기
+#  		  	ui: { outline: true },	#UI에만 덮어쓰기
+#  		  	ex: { shadow: false }	  #EX에만 덮어쓰기
+#		    	)
+#--------------------------------------------------------------------------
+  PROFILE[:ko].merge!(name: ["THE삐끗삐끗"], size: 24)
+  PROFILE[:jp].merge!(name: ["VL Gothic"], size: 24)
+  PROFILE[:en].merge!(name: ["Arial"], size: 24)
+  PROFILE[:hz].merge!(name: ["Meiryo"], size: 27)
+
+#/////////////////////////////////////////////////////////////////////////////#
+#                                                                             #
+#                이하 스크립트는 변경할 필요 없는 스크립트 입니다.                  #
+#                                                                             #
+#/////////////////////////////////////////////////////////////////////////////#
+  #--------------------------------------------------------------------------
+  # Unicode classification
+  #--------------------------------------------------------------------------
+  def self.group(cp)
+    return :jp if jp_punct?(cp)
+
+    return :ko if (0xAC00..0xD7A3).include?(cp) ||
+                  (0x1100..0x11FF).include?(cp) ||
+                  (0x3130..0x318F).include?(cp)
+
+    return :jp if (0x3040..0x30FF).include?(cp) ||
+                  (0x31F0..0x31FF).include?(cp) ||
+                  (0xFF66..0xFF9D).include?(cp)
+
+    return :hz if (0x4E00..0x9FFF).include?(cp) ||
+                  (0x3400..0x4DBF).include?(cp) ||
+                  (0xF900..0xFAFF).include?(cp)
+
+    :en
+  end
+
+  #--------------------------------------------------------------------------
+  # Neutral characters (attach to previous run/font)
+  #--------------------------------------------------------------------------
+  def self.neutral?(cp)
+    return true if cp == 0x20
+    return true if cp == 0x3000
+
+    return true if (0x21..0x2F).include?(cp) ||
+                   (0x3A..0x40).include?(cp) ||
+                   (0x5B..0x60).include?(cp) ||
+                   (0x7B..0x7E).include?(cp)
+
+    return true if (0x2010..0x201F).include?(cp)
+    return true if cp == 0x2026
+
+    false
+  end
+
+  def self.jp_punct?(cp)
+    return true if (0x3001..0x303F).include?(cp)
+    return true if (0xFF01..0xFF0F).include?(cp)
+    return true if (0xFF1A..0xFF20).include?(cp)
+    return true if (0xFF3B..0xFF40).include?(cp)
+    return true if (0xFF5B..0xFF65).include?(cp)
+    false
+  end
+
+  #--------------------------------------------------------------------------
+  # Profile merging: root keys = common, :ui/:ex = overlay
+  #--------------------------------------------------------------------------
+  def self.merged_profile(group, context = nil)
+    base = PROFILE[group] || {}
+    result = {}
+
+    base.each do |k, v|
+      next if k == :ui || k == :ex
+      result[k] = v
+    end
+
+    if context && base[context].is_a?(Hash)
+      base[context].each do |k, v|
+        result[k] = v
+      end
+    end
+
+    result
+  end
+
+  #--------------------------------------------------------------------------
+  # Save / Restore font state (safe)
+  #--------------------------------------------------------------------------
+  def self.save_font_state(font)
+    {
+      name: font.name,
+      size: font.size,
+      bold: font.bold,
+      italic: font.italic,
+      shadow: font.shadow,
+      outline: font.outline,
+      color: [font.color.red, font.color.green, font.color.blue, font.color.alpha],
+      out_color: [font.out_color.red, font.out_color.green, font.out_color.blue, font.out_color.alpha],
+    }
+  end
+
+  def self.restore_font_state(font, state)
+    return unless state
+    font.name    = state[:name]
+    font.size    = state[:size]
+    font.bold    = state[:bold]
+    font.italic  = state[:italic]
+    font.shadow  = state[:shadow]
+    font.outline = state[:outline]
+    font.color.set(*state[:color])
+    font.out_color.set(*state[:out_color])
+  end
+
+  #--------------------------------------------------------------------------
+  # Optimized profile cache
+  #--------------------------------------------------------------------------
+  @_profile_cache = {}
+
+  def self.invalidate_cache!
+    @_profile_cache.clear
+  end
+
+  def self.cached_profile(group, context)
+    key = [group, context]
+    @_profile_cache[key] ||= merged_profile(group, context)
+  end
+
+  #--------------------------------------------------------------------------
+  # Apply profile to a Font object
+  # - Only applies keys that exist (nil = ignore)
+  # - If PROFILE[group] is empty, do nothing (pure no-op)
+  #--------------------------------------------------------------------------
+  def self.apply_profile(font, group, context = nil)
+    base = PROFILE[group]
+    return unless base && !base.empty?
+
+    opts = cached_profile(group, context)
+
+    if opts.key?(:name) && opts[:name]
+      font.name = opts[:name]
+    end
+
+    font.size    = opts[:size]    if opts.key?(:size)    && !opts[:size].nil?
+    font.bold    = opts[:bold]    if opts.key?(:bold)    && !opts[:bold].nil?
+    font.italic  = opts[:italic]  if opts.key?(:italic)  && !opts[:italic].nil?
+    font.shadow  = opts[:shadow]  if opts.key?(:shadow)  && !opts[:shadow].nil?
+    font.outline = opts[:outline] if opts.key?(:outline) && !opts[:outline].nil?
+
+    if opts.key?(:color) && opts[:color].is_a?(Array)
+      font.color.set(*opts[:color])
+    end
+    if opts.key?(:out_color) && opts[:out_color].is_a?(Array)
+      font.out_color.set(*opts[:out_color])
+    end
+  end
+end
+
+#------------------------------------------------------------------------------
+# draw_text_ex route: per-char, optimized (skip if group unchanged)
+#------------------------------------------------------------------------------
+class Window_Base < Window
+  unless method_defined?(:__mf_orig_process_normal_character)
+    alias __mf_orig_process_normal_character process_normal_character
+  end
+
+  def process_normal_character(c, pos)
+    if contents && c.is_a?(String) && !c.empty?
+      contents.__mf_skip_autofont = true
+
+      g = MultiFont.group(c.ord)
+      if @__mf_last_group != g
+        MultiFont.apply_profile(contents.font, g, :ex)
+        @__mf_last_group = g
+      end
+    end
+
+    __mf_orig_process_normal_character(c, pos)
+  ensure
+    contents.__mf_skip_autofont = false if contents
+  end
+end
+
+#------------------------------------------------------------------------------
+# UI route: Bitmap#draw_text (optimized pick_group cache)
+#------------------------------------------------------------------------------
+class Bitmap
+  attr_accessor :__mf_skip_autofont
+
+  unless method_defined?(:__mf_orig_draw_text)
+    alias __mf_orig_draw_text draw_text
+  end
+
+  # Class-level cache (bounded)
+  @_mf_group_cache = {}
+  @_mf_group_cache_limit = 256
+
+  def __mf_pick_group(text)
+    cache = Bitmap.instance_variable_get(:@_mf_group_cache)
+    if cache.key?(text)
+      return cache[text]
+    end
+
+    n = 12
+    scores = Hash.new(0)
+    sampled = 0
+
+    text.each_codepoint do |cp|
+      next if MultiFont.neutral?(cp)
+      g = MultiFont.group(cp)
+
+      case g
+      when :ko then scores[:ko] += 3
+      when :jp then scores[:jp] += 3
+      when :hz then scores[:hz] += 3
+      else           scores[:en] += 1
+      end
+
+      sampled += 1
+      break if sampled >= n
+    end
+
+    winner, win_score = scores.max_by { |k, v| v } || [:en, 0]
+    result = (win_score < 4 ? nil : winner)
+
+    limit = Bitmap.instance_variable_get(:@_mf_group_cache_limit)
+    cache.clear if cache.size >= limit
+    cache[text] = result
+    result
+  end
+
+  def draw_text(*args)
+    return __mf_orig_draw_text(*args) if @__mf_skip_autofont
+
+    text =
+      if args[0].is_a?(Rect)
+        args[1]
+      else
+        args[4]
+      end
+
+    return __mf_orig_draw_text(*args) unless text.is_a?(String)
+    return __mf_orig_draw_text(*args) if text.empty?
+    return __mf_orig_draw_text(*args) if text.include?("\e")
+
+    saved = MultiFont.save_font_state(self.font)
+    begin
+      g = __mf_pick_group(text)
+      MultiFont.apply_profile(self.font, g, :ui) if g
+      __mf_orig_draw_text(*args)
+    ensure
+      MultiFont.restore_font_state(self.font, saved)
+    end
+  end
+end
