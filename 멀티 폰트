@@ -72,10 +72,10 @@ module MultiFont
 #  		  	ex: { shadow: false }	  #EX에만 덮어쓰기
 #		    	)
 #--------------------------------------------------------------------------
-  PROFILE[:ko].merge!(name: ["THE삐끗삐끗"], size: 24)
-  PROFILE[:jp].merge!(name: ["VL Gothic"], size: 24)
-  PROFILE[:en].merge!(name: ["Arial"], size: 24)
-  PROFILE[:hz].merge!(name: ["Meiryo"], size: 27)
+  PROFILE[:ko].merge!(name: ["나눔고딕", "맑은 고딕"], size: 24)
+  PROFILE[:jp].merge!(name: ["VL Gothic", "MS Gothic"], size: 24)
+  PROFILE[:en].merge!(name: ["Arial", "Tahoma"], size: 24)
+  PROFILE[:hz].merge!(name: ["Meiryo", "Malgun Gothic", "SimSun"], size: 27)
 
 #/////////////////////////////////////////////////////////////////////////////#
 #                                                                             #
