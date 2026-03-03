@@ -5,40 +5,63 @@
 # ---------------------------------------------------------------
 # ---------------------------------------------------------------
 #	적용 범위 :
-#	UI) Btimap#draw_text
-#	메뉴/상태장/리스트 등의 대부분의 UI에 적용
-#	텍스트의 일부를 샘플링해서, 제일 많은 비중을 차지하는 언어의 :ui 프로파일 적용
+#	  UI) Btimap#draw_text
+#	  메뉴/상태장/리스트 등의 대부분의 UI에 적용
+#	  텍스트의 일부를 샘플링해서, 제일 많은 비중을 차지하는 언어의 :ui 프로파일 적용
 #
-#	EX) Window_Base#Process_normal_character = draw_text_ex
-#	메시지창/헬프창 등, draw_text_ex를 쓰는 텍스트에 적용
-#	글자 단위로 언어를 판정해서 그 언어에 :ex를 적용
+#	  EX) Window_Base#Process_normal_character = draw_text_ex
+#	  메시지창/헬프창 등, draw_text_ex를 쓰는 텍스트에 적용
+#	  글자 단위로 언어를 판정해서 그 언어에 :ex를 적용
 # ---------------------------------------------------------------
 # ---------------------------------------------------------------
 #	폰트 판정 :
-#	한국어: 완성형/자모/호환자모 범위
-#	일본어 : 히라가나/가타카나/반각 가타카나 + 일본식 구두점 일부는 :jp로 취급
-#	한자 : CJK 통합 한자/확장A/호환 한자
-#	그 외는 전부 :en으로 취급
+#	  한국어: 완성형/자모/호환자모 범위
+#	  일본어 : 히라가나/가타카나/반각 가타카나 + 일본식 구두점 일부는 :jp로 취급
+#	  한자 : CJK 통합 한자/확장A/호환 한자
+#	  그 외는 전부 :en으로 취급
 # ---------------------------------------------------------------
 # ---------------------------------------------------------------
-#	중요한 제한/주의사항 : 
+#	스크립트 비활성화 :
+#	  만약 해당 스크립트로 인해 다른 언어 드로잉이 정상적으로 실행되지 않을 시
+#	  몇 가지 방법을 통해 특정 부분에서 끌 수 있음
+#   단, EX만 끄는 방법은 없음
+#
+#	1) 특정 윈도우 및 객체에서 비활성화 (UI Only)
+#	  비활성화 하고자 하는 window.contents 및 bitmap. 바로 밑에
+#	   __mf_skip_autofont = true를 추가하면 해당 구간은 전부 비활성화
+#		  Ex)
+#		    @my_window = Window_Base.new(0, 0, 100, 100)
+#		    @my_window.contents.__mf_skip_autofont = true
+#		    #이 구간동안 my_window에서 수행되는 모든 언어는 멀티 폰트 무시
+#		    @my_window.contents.__mf_skip_autofont = false
+#		
+#	2) 특정 코드에서만 일시적으로 비활성화 (UI/EX Both)
+#	  비활성화 하고자 하는 코드 위아래로 MultiFont.without do랑 end로 감쌀 것
+#		  Ex)
+#	 	    MultiFont.without do
+#		    #이 블록 안에서 그려지는 모든 내용은 멀티 폰트 시스템을 무시
+#		    end
+# ---------------------------------------------------------------
+# ---------------------------------------------------------------
+#	기타 비활성화 조간/주의사항 : 
 #	- 이 플러그인은 Bitmap#draw_text를 전역 후킹하므로,
 #   같은 메서드를 후킹하는 스크립트와 alias 충돌 가능
-#	      보통 “맨 아래(메인 위)”에 두면 해결되는 경우가 많음
+#	    충돌을 최대한 피하려면 해당 스크립트를 맨 아래에 두는 것을 권장
 #
-#	- UI 판정은 샘플링 기반이라 (최대 12글자 카운트)
-#		   너무 짧거나 증거가 부족하면 아예 무개입할 수 있음(의도된 안전장치)
+#	- UI 판정은 샘플링 기반이라 너무 짧거나 증거가 부족하면 아예 무개입
+#     구체적으로 최대 12글자를 카운트해 영어 1점, 공백 0점, 나머지 3점으로 점수를 매겨
+#     제일 개입이 높은 언어를 판단하는데, 해당 점수가 4점 이하일 경우 자동 비활성화
 #
 #	- draw_text에 \e 같은 escape가 들어간 문자열은 무개입(원본 처리)
 #
 #	- draw_text_ex는 줄바꿈/이모지/특수 처리 등이 섞이면 폰트 전환이 잦을 수 있음
-# (그래도 최적화로 “같은 그룹 재적용”은 막아둠)
+#   (그래도 최적화로 “같은 그룹 재적용”은 막아둠)
 # ---------------------------------------------------------------
 # ---------------------------------------------------------------
 #	캐시 관련 : 
-#	내부에 프로파일 캐시/문자열 판정 캐시가 있음
-#	게임 실행 중 PROFILE을 바꾸는 경우만 MultiFont.invalidate_cache! 호출하면 됨
-#	(대부분은 시작 시 설정이라 신경 X)
+#	  내부에 프로파일 캐시/문자열 판정 캐시가 있음
+#	  게임 실행 중 PROFILE을 바꾸는 경우만 MultiFont.invalidate_cache! 호출하면 됨
+#	  (대부분은 시작 시 설정이라 신경 X)
 #==============================================================================
 
 module MultiFont
@@ -72,16 +95,29 @@ module MultiFont
 #  		  	ex: { shadow: false }	  #EX에만 덮어쓰기
 #		    	)
 #--------------------------------------------------------------------------
-  PROFILE[:ko].merge!(name: ["나눔고딕", "맑은 고딕"], size: 24)
-  PROFILE[:jp].merge!(name: ["VL Gothic", "MS Gothic"], size: 24)
-  PROFILE[:en].merge!(name: ["Arial", "Tahoma"], size: 24)
-  PROFILE[:hz].merge!(name: ["Meiryo", "Malgun Gothic", "SimSun"], size: 27)
+  PROFILE[:ko].merge!(name: ["DOSGothic", "맑은 고딕"], size: 16)
+  PROFILE[:jp].merge!(name: ["Limgul 15", "MS Gothic"], size: 16)
+  PROFILE[:en].merge!(name: ["Limgul 15", "Tahoma"], size: 16)
+  PROFILE[:hz].merge!(name: ["DOSGothic", "Malgun Gothic", "SimSun"], size: 16)
 
 #/////////////////////////////////////////////////////////////////////////////#
 #                                                                             #
-#                이하 스크립트는 변경할 필요 없는 스크립트 입니다.                #
+#                이하 스크립트는 변경할 필요 없는 스크립트 입니다.                  #
 #                                                                             #
 #/////////////////////////////////////////////////////////////////////////////#
+  @__mf_disable_depth = 0
+
+  def self.disabled?
+    @__mf_disable_depth > 0
+  end
+
+  def self.without
+    @__mf_disable_depth += 1
+    yield
+  ensure
+    @__mf_disable_depth -= 1
+    @__mf_disable_depth = 0 if @__mf_disable_depth < 0
+  end
   #--------------------------------------------------------------------------
   # Unicode classification
   #--------------------------------------------------------------------------
@@ -232,6 +268,7 @@ class Window_Base < Window
   end
 
   def process_normal_character(c, pos)
+    return __mf_orig_process_normal_character(c, pos) if MultiFont.disabled?
     if contents && c.is_a?(String) && !c.empty?
       contents.__mf_skip_autofont = true
 
@@ -298,6 +335,7 @@ class Bitmap
 
   def draw_text(*args)
     return __mf_orig_draw_text(*args) if @__mf_skip_autofont
+    return __mf_orig_draw_text(*args) if MultiFont.disabled?
 
     text =
       if args[0].is_a?(Rect)
